@@ -1,20 +1,21 @@
 const pool = require("../config/database");
 
 // ========================================
-// GET ALL ACTIVE ROLES
+// GET ALL ACTIVE STATUS
 // ========================================
-const getAllRoles = async () => {
+const getAllActiveStatuses = async () => {
 
     const [rows] = await pool.query(`
         SELECT 
             id,
             name,
-            description,
-            status,
-            created_at
-        FROM roles
+            code,
+            sort_order,
+            is_final,
+            status
+        FROM service_status_catalog
         WHERE status = 'active'
-        ORDER BY created_at DESC
+        ORDER BY sort_order ASC
     `);
 
     return rows;
@@ -22,18 +23,20 @@ const getAllRoles = async () => {
 
 
 // ========================================
-// GET ROLE BY ID
+// GET STATUS BY ID
 // ========================================
-const getRoleById = async (id) => {
+const getStatusById = async (id) => {
 
     const [rows] = await pool.query(`
         SELECT 
             id,
             name,
-            description,
+            code,
+            sort_order,
+            is_final,
             status,
             created_at
-        FROM roles
+        FROM service_status_catalog
         WHERE id = ?
     `, [id]);
 
@@ -42,13 +45,13 @@ const getRoleById = async (id) => {
 
 
 // ========================================
-// FIND ROLE BY NAME
+// FIND STATUS BY CODE
 // ========================================
-const findByName = async (name) => {
+const findByCode = async (code) => {
 
     const [rows] = await pool.query(
-        `SELECT id FROM roles WHERE name = ?`,
-        [name]
+        `SELECT id FROM service_status_catalog WHERE code = ?`,
+        [code]
     );
 
     return rows.length ? rows[0] : null;
@@ -56,30 +59,28 @@ const findByName = async (name) => {
 
 
 // ========================================
-// FIND ROLE BY NAME EXCLUDING ID (FOR UPDATE)
+// CREATE STATUS
 // ========================================
-const findByNameExcludingId = async (name, id) => {
-
-    const [rows] = await pool.query(
-        `SELECT id FROM roles WHERE name = ? AND id != ?`,
-        [name, id]
-    );
-
-    return rows.length > 0;
-};
-
-
-// ========================================
-// CREATE ROLE
-// ========================================
-const createRole = async (name, description) => {
+const createStatus = async ({
+    name,
+    code,
+    sort_order = 0,
+    is_final = false
+}) => {
 
     const [result] = await pool.query(`
-        INSERT INTO roles (name, description, status)
-        VALUES (?, ?, 'active')
+        INSERT INTO service_status_catalog (
+            name,
+            code,
+            sort_order,
+            is_final
+        )
+        VALUES (?, ?, ?, ?)
     `, [
         name,
-        description || null
+        code,
+        sort_order,
+        is_final
     ]);
 
     return result.insertId;
@@ -87,18 +88,24 @@ const createRole = async (name, description) => {
 
 
 // ========================================
-// UPDATE ROLE
+// UPDATE STATUS
 // ========================================
-const updateRole = async (id, name, description) => {
+const updateStatus = async (id, {
+    name,
+    sort_order,
+    is_final
+}) => {
 
     const [result] = await pool.query(`
-        UPDATE roles
+        UPDATE service_status_catalog
         SET name = ?,
-            description = ?
+            sort_order = ?,
+            is_final = ?
         WHERE id = ?
     `, [
         name,
-        description || null,
+        sort_order,
+        is_final,
         id
     ]);
 
@@ -107,12 +114,12 @@ const updateRole = async (id, name, description) => {
 
 
 // ========================================
-// SOFT DELETE ROLE
+// SOFT DELETE STATUS
 // ========================================
-const softDeleteRole = async (id) => {
+const softDeleteStatus = async (id) => {
 
     const [result] = await pool.query(`
-        UPDATE roles
+        UPDATE service_status_catalog
         SET status = 'inactive'
         WHERE id = ?
     `, [id]);
@@ -122,11 +129,10 @@ const softDeleteRole = async (id) => {
 
 
 module.exports = {
-    getAllRoles,
-    getRoleById,
-    findByName,
-    findByNameExcludingId,
-    createRole,
-    updateRole,
-    softDeleteRole
+    getAllActiveStatuses,
+    getStatusById,
+    findByCode,
+    createStatus,
+    updateStatus,
+    softDeleteStatus
 };
