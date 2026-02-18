@@ -11,11 +11,18 @@ const notificationRoutes = require("./routes/notification.routes");
 
 
 app.use('/api/v1/auth', require('./routes/auth.routes'));
+<<<<<<< HEAD
 app.use('/api/v1/users', require('./routes/user.routes'));
 app.use('/api/v1/products', require('./routes/product.routes'));
 app.use('/api/v1/sales', require('./routes/sale.routes'));
 app.use('/api/v1/dashboard', require('./routes/dashboard.routes'));
 app.use("/api/communication", communicationRoutes);
 app.use("/api/notifications", notificationRoutes);
+=======
+// app.use('/api/v1/users', require('./routes/user.routes'));
+// app.use('/api/v1/products', require('./routes/product.routes'));
+// app.use('/api/v1/sales', require('./routes/sale.routes'));
+// app.use('/api/v1/dashboard', require('./routes/dashboard.routes'));
+>>>>>>> 04494c5 (last changes)
 
 module.exports = app;
