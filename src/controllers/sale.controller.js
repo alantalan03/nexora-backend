@@ -154,3 +154,173 @@ exports.createSale = async (req, res) => {
         });
     }
 };
+
+
+// ========================================
+// GET SALE BY ID
+// ========================================
+exports.getSaleById = async (req, res) => {
+    try {
+
+        const { id } = req.params;
+
+        const sale = await Sale.getSaleHeaderById(id);
+
+        if (!sale) {
+            return res.status(404).json({
+                message: "Venta no encontrada"
+            });
+        }
+
+        const products = await Sale.getSaleProductsBySaleId(id);
+
+        res.status(200).json({
+            sale,
+            products
+        });
+
+    } catch (error) {
+        console.error("Error getSaleById:", error);
+        res.status(500).json({
+            message: "Error interno del servidor"
+        });
+    }
+};
+
+
+// ========================================
+// GET ALL SALES
+// ========================================
+exports.getAllSales = async (req, res) => {
+    try {
+
+        const {
+            page = 1,
+            limit = 10,
+            start_date,
+            end_date,
+            payment_method,
+            status
+        } = req.query;
+
+        const result = await Sale.getAllSales({
+            page: Number(page),
+            limit: Number(limit),
+            start_date,
+            end_date,
+            payment_method,
+            status
+        });
+
+        res.status(200).json({
+            data: result.data,
+            pagination: {
+                total: result.total,
+                page: Number(page),
+                limit: Number(limit),
+                totalPages: Math.ceil(result.total / limit)
+            }
+        });
+
+    } catch (error) {
+        console.error("Error getAllSales:", error);
+        res.status(500).json({
+            message: "Error interno del servidor"
+        });
+    }
+};
+
+
+
+// ========================================
+// DAILY SUMMARY
+// ========================================
+exports.getDailySummary = async (req, res) => {
+    try {
+
+        const summary = await Sale.getDailySummary();
+
+        res.status(200).json(summary);
+
+    } catch (error) {
+        console.error("Error getDailySummary:", error);
+        res.status(500).json({
+            message: "Error interno del servidor"
+        });
+    }
+};
+
+
+
+// ========================================
+// CANCEL SALE
+// ========================================
+exports.cancelSale = async (req, res) => {
+
+    const connection = await pool.getConnection();
+
+    try {
+
+        const { id } = req.params;
+
+        await connection.beginTransaction();
+
+        const sale = await Sale.getSaleForUpdate(connection, id);
+
+        if (!sale) {
+            throw new Error("Venta no encontrada");
+        }
+
+        if (sale.status === "cancelled") {
+            throw new Error("La venta ya está cancelada");
+        }
+
+        const saleProducts = await Sale.getSaleProductsBySaleId(id);
+
+        for (const item of saleProducts) {
+
+            const product = await Sale.getProductForUpdate(
+                connection,
+                item.product_id
+            );
+
+            const previousStock = product.stock;
+            const newStock = previousStock + item.quantity;
+
+            await Sale.updateProductStock(
+                connection,
+                product.id,
+                newStock
+            );
+
+            await Sale.insertInventoryMovement(connection, {
+                product_id: product.id,
+                quantity: item.quantity,
+                previous_stock: previousStock,
+                new_stock: newStock,
+                reference_id: id,
+                user_id: req.user.id
+            });
+        }
+
+        await Sale.markSaleAsCancelled(connection, id);
+
+        await connection.commit();
+        connection.release();
+
+        res.status(200).json({
+            message: "Venta cancelada correctamente"
+        });
+
+    } catch (error) {
+
+        await connection.rollback();
+        connection.release();
+
+        console.error("Error cancelSale:", error);
+
+        res.status(400).json({
+            message: error.message || "Error al cancelar venta"
+        });
+    }
+};

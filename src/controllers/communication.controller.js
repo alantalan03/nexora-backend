@@ -1,7 +1,9 @@
 const Communication = require("../models/communication.model");
 
+// =============================
 // SEND MESSAGE (AUTH USER)
-exports.sendMessage = async (req, res) => {
+// =============================
+const sendMessage = async (req, res) => {
     try {
 
         const { service_order_id, message, image_url } = req.body;
@@ -30,4 +32,25 @@ exports.sendMessage = async (req, res) => {
             message: "Error interno"
         });
     }
+};
+
+// =============================
+const getConversation = async (req, res) => {
+    res.json({ message: "getConversation funcionando" });
+};
+
+const getPublicConversation = async (req, res) => {
+    res.json({ message: "getPublicConversation funcionando" });
+};
+
+const sendPublicMessage = async (req, res) => {
+    res.json({ message: "sendPublicMessage funcionando" });
+};
+
+// =============================
+module.exports = {
+  sendMessage,
+  getConversation,
+  getPublicConversation,
+  sendPublicMessage
 };

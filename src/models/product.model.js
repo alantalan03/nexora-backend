@@ -271,11 +271,25 @@ const softDeleteProduct = async (id) => {
     return result.affectedRows;
 };
 
+// ========================================
+// FIND SKU BY OTHER PRODUCT
+// ========================================
+const findSkuInOtherProduct = async (sku, productId) => {
+
+    const [rows] = await pool.query(
+        `SELECT id FROM products WHERE sku = ? AND id != ?`,
+        [sku, productId]
+    );
+
+    return rows.length > 0;
+};
+
 
 module.exports = {
     getAllProducts,
     getProductById,
     findBySku,
+    findSkuInOtherProduct,
     createProduct,
     createInitialMovement,
     updateProduct,

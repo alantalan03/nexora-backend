@@ -169,10 +169,14 @@ exports.createProduct = async (req, res) => {
 // ========================================
 // UPDATE PRODUCT
 // ========================================
+// ========================================
+// UPDATE PRODUCT
+// ========================================
 exports.updateProduct = async (req, res) => {
     try {
 
-        const { id } = req.params;
+        const id = Number(req.params.id);
+
         const {
             name,
             description,
@@ -181,12 +185,29 @@ exports.updateProduct = async (req, res) => {
             purchase_price = 0,
             sale_price,
             min_stock = 0
-        } = req.body;
+        } = req.body || {};
 
         if (!name || !sale_price) {
             return res.status(400).json({
                 message: "Nombre y precio de venta son obligatorios"
             });
+        }
+
+        if (sale_price <= 0) {
+            return res.status(400).json({
+                message: "El precio de venta debe ser mayor a 0"
+            });
+        }
+
+        // 🔥 VALIDAR SKU DUPLICADO
+        if (sku) {
+            const skuExists = await Product.findSkuInOtherProduct(sku, id);
+
+            if (skuExists) {
+                return res.status(400).json({
+                    message: "El SKU ya está asignado a otro producto"
+                });
+            }
         }
 
         const affectedRows = await Product.updateProduct(id, {
@@ -205,18 +226,26 @@ exports.updateProduct = async (req, res) => {
             });
         }
 
-        res.status(200).json({
+        return res.status(200).json({
             message: "Producto actualizado correctamente"
         });
 
     } catch (error) {
+
+        // 🔒 Seguridad extra por si BD lanza UNIQUE
+        if (error.code === "ER_DUP_ENTRY") {
+            return res.status(400).json({
+                message: "El SKU ya está registrado"
+            });
+        }
+
         console.error("Error updateProduct:", error);
-        res.status(500).json({
+
+        return res.status(500).json({
             message: "Error interno del servidor"
         });
     }
 };
-
 
 // ========================================
 // SOFT DELETE PRODUCT
