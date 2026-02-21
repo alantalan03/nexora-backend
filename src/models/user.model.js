@@ -1,12 +1,12 @@
 const pool = require("../config/database");
 
 // ========================================
-// BUILD FILTERS
+// BUILD FILTERS (MULTIEMPRESA)
 // ========================================
-const buildFilters = ({ search, role }) => {
+const buildFilters = ({ company_id, search, role }) => {
 
-    let whereClause = "WHERE 1=1";
-    let values = [];
+    let whereClause = "WHERE u.company_id = ?";
+    let values = [company_id];
 
     if (search) {
         whereClause += " AND (u.name LIKE ? OR u.email LIKE ?)";
@@ -26,6 +26,7 @@ const buildFilters = ({ search, role }) => {
 // GET ALL USERS
 // ========================================
 const getAllUsers = async ({
+    company_id,
     page,
     limit,
     search,
@@ -34,7 +35,11 @@ const getAllUsers = async ({
 
     const offset = (page - 1) * limit;
 
-    const { whereClause, values } = buildFilters({ search, role });
+    const { whereClause, values } = buildFilters({
+        company_id,
+        search,
+        role
+    });
 
     const [users] = await pool.query(`
         SELECT 
@@ -70,7 +75,7 @@ const getAllUsers = async ({
 // ========================================
 // GET USER BY ID
 // ========================================
-const getUserById = async (id) => {
+const getUserById = async (id, company_id) => {
 
     const [rows] = await pool.query(`
         SELECT 
@@ -85,21 +90,23 @@ const getUserById = async (id) => {
         FROM users u
         JOIN roles r ON u.role_id = r.id
         WHERE u.id = ?
-    `, [id]);
+        AND u.company_id = ?
+        LIMIT 1
+    `, [id, company_id]);
 
     return rows.length ? rows[0] : null;
 };
 
 
 // ========================================
-// FIND USER BY EMAIL
+// FIND USER BY EMAIL (MULTIEMPRESA)
 // ========================================
-const findByEmail = async (email) => {
-
-    const [rows] = await pool.query(
-        `SELECT id FROM users WHERE email = ?`,
-        [email]
-    );
+const findByEmailGlobal = async (email) => {
+    const [rows] = await pool.query(`
+        SELECT id FROM users
+        WHERE email = ?
+        LIMIT 1
+    `, [email]);
 
     return rows.length ? rows[0] : null;
 };
@@ -109,6 +116,7 @@ const findByEmail = async (email) => {
 // CREATE USER
 // ========================================
 const createUser = async ({
+    company_id,
     name,
     email,
     password,
@@ -118,6 +126,7 @@ const createUser = async ({
 
     const [result] = await pool.query(`
         INSERT INTO users (
+            company_id,
             name,
             email,
             password,
@@ -125,8 +134,9 @@ const createUser = async ({
             role_id,
             status
         )
-        VALUES (?, ?, ?, ?, ?, 'active')
+        VALUES (?, ?, ?, ?, ?, ?, 'active')
     `, [
+        company_id,
         name,
         email,
         password,
@@ -141,25 +151,46 @@ const createUser = async ({
 // ========================================
 // UPDATE USER
 // ========================================
-const updateUser = async (
-    id,
-    { name, email, phone, role_id }
-) => {
+const updateUser = async (id, company_id, data) => {
 
-    const [result] = await pool.query(`
+    const fields = [];
+    const values = [];
+
+    if (data.name !== undefined) {
+        fields.push("name = ?");
+        values.push(data.name);
+    }
+
+    if (data.email !== undefined) {
+        fields.push("email = ?");
+        values.push(data.email);
+    }
+
+    if (data.phone !== undefined) {
+        fields.push("phone = ?");
+        values.push(data.phone);
+    }
+
+    if (data.role_id !== undefined) {
+        fields.push("role_id = ?");
+        values.push(data.role_id);
+    }
+
+    // 🚨 Si no se envió ningún campo
+    if (!fields.length) {
+        return 0;
+    }
+
+    const sql = `
         UPDATE users
-        SET name = ?,
-            email = ?,
-            phone = ?,
-            role_id = ?
+        SET ${fields.join(", ")}
         WHERE id = ?
-    `, [
-        name,
-        email,
-        phone,
-        role_id,
-        id
-    ]);
+        AND company_id = ?
+    `;
+
+    values.push(id, company_id);
+
+    const [result] = await pool.query(sql, values);
 
     return result.affectedRows;
 };
@@ -168,13 +199,18 @@ const updateUser = async (
 // ========================================
 // UPDATE PASSWORD
 // ========================================
-const updatePassword = async (id, hashedPassword) => {
+const updatePassword = async (
+    id,
+    company_id,
+    hashedPassword
+) => {
 
     const [result] = await pool.query(`
         UPDATE users
         SET password = ?
         WHERE id = ?
-    `, [hashedPassword, id]);
+        AND company_id = ?
+    `, [hashedPassword, id, company_id]);
 
     return result.affectedRows;
 };
@@ -183,13 +219,18 @@ const updatePassword = async (id, hashedPassword) => {
 // ========================================
 // UPDATE STATUS
 // ========================================
-const updateUserStatus = async (id, status) => {
+const updateUserStatus = async (
+    id,
+    company_id,
+    status
+) => {
 
     const [result] = await pool.query(`
         UPDATE users
         SET status = ?
         WHERE id = ?
-    `, [status, id]);
+        AND company_id = ?
+    `, [status, id, company_id]);
 
     return result.affectedRows;
 };
@@ -198,7 +239,7 @@ const updateUserStatus = async (id, status) => {
 module.exports = {
     getAllUsers,
     getUserById,
-    findByEmail,
+    findByEmailGlobal,
     createUser,
     updateUser,
     updatePassword,

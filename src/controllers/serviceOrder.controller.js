@@ -8,33 +8,62 @@ const ServiceOrder = require("../models/serviceOrder.model");
 exports.createServiceOrder = async (req, res) => {
 
     const connection = await pool.getConnection();
+    const company_id = req.user.company_id;
 
     try {
 
         const {
-            client_id,
-            device_model,
-            device_brand,
+            customer_id,
+            device_type,
             problem_description,
             estimated_cost = 0
         } = req.body;
 
-        if (!client_id || !device_model) {
+        if (!customer_id || !device_type) {
             return res.status(400).json({
-                message: "Cliente y modelo son obligatorios"
+                message: "Cliente y tipo de dispositivo son obligatorios"
             });
         }
 
         await connection.beginTransaction();
 
+        // 🔥 1. Obtener datos del cliente (snapshot)
+        const [customerRows] = await connection.query(`
+            SELECT name, phone, email
+            FROM customers
+            WHERE id = ?
+            AND company_id = ?
+        `, [customer_id, company_id]);
+
+        if (customerRows.length === 0) {
+            await connection.rollback();
+            connection.release();
+            return res.status(404).json({
+                message: "Cliente no encontrado"
+            });
+        }
+
+        const customer = customerRows[0];
+
+        // 🔥 2. Generar número seguro
+        const order_number = await ServiceOrder.generateOrderNumber(
+            connection,
+            company_id
+        );
+
         const public_token = uuidv4();
 
+        // 🔥 3. Crear orden
         const orderId = await ServiceOrder.createServiceOrder(
             connection,
             {
-                client_id,
-                device_model,
-                device_brand: device_brand || null,
+                company_id,
+                customer_id,
+                order_number,
+                customer_name: customer.name,
+                customer_phone: customer.phone || null,
+                customer_email: customer.email || null,
+                device_type,
                 problem_description: problem_description || null,
                 estimated_cost,
                 created_by: req.user.id,
@@ -42,11 +71,15 @@ exports.createServiceOrder = async (req, res) => {
             }
         );
 
+        // 🔥 4. Insertar historial inicial
         await ServiceOrder.insertStatusHistory(
             connection,
-            orderId,
-            "received",
-            req.user.id
+            {
+                company_id,
+                service_order_id: orderId,
+                status: "pending",
+                changed_by: req.user.id
+            }
         );
 
         await connection.commit();
@@ -55,6 +88,7 @@ exports.createServiceOrder = async (req, res) => {
         res.status(201).json({
             message: "Orden creada correctamente",
             orderId,
+            order_number,
             public_token
         });
 
@@ -73,17 +107,22 @@ exports.createServiceOrder = async (req, res) => {
 
 
 // ========================================
-// GET ALL SERVICE ORDERS
+// GET ALL
 // ========================================
 exports.getAllServiceOrders = async (req, res) => {
+
     try {
 
-        const orders = await ServiceOrder.getAllServiceOrders();
+        const orders = await ServiceOrder.getAllServiceOrders(
+            req.user.company_id
+        );
 
         res.status(200).json(orders);
 
     } catch (error) {
+
         console.error("Error getAllServiceOrders:", error);
+
         res.status(500).json({
             message: "Error interno"
         });
@@ -92,14 +131,18 @@ exports.getAllServiceOrders = async (req, res) => {
 
 
 // ========================================
-// GET SERVICE ORDER BY ID
+// GET BY ID
 // ========================================
 exports.getServiceOrderById = async (req, res) => {
+
     try {
 
         const { id } = req.params;
 
-        const order = await ServiceOrder.getServiceOrderById(id);
+        const order = await ServiceOrder.getServiceOrderById(
+            id,
+            req.user.company_id
+        );
 
         if (!order) {
             return res.status(404).json({
@@ -110,7 +153,9 @@ exports.getServiceOrderById = async (req, res) => {
         res.status(200).json(order);
 
     } catch (error) {
+
         console.error("Error getServiceOrderById:", error);
+
         res.status(500).json({
             message: "Error interno"
         });
@@ -122,14 +167,22 @@ exports.getServiceOrderById = async (req, res) => {
 // ASSIGN TECHNICIAN
 // ========================================
 exports.assignTechnician = async (req, res) => {
+
     try {
 
         const { id } = req.params;
         const { technician_id } = req.body;
 
+        if (!technician_id) {
+            return res.status(400).json({
+                message: "El técnico es obligatorio"
+            });
+        }
+
         const affectedRows = await ServiceOrder.assignTechnician(
             id,
-            technician_id
+            technician_id,
+            req.user.company_id
         );
 
         if (!affectedRows) {
@@ -143,7 +196,9 @@ exports.assignTechnician = async (req, res) => {
         });
 
     } catch (error) {
+
         console.error("Error assignTechnician:", error);
+
         res.status(500).json({
             message: "Error interno"
         });
@@ -157,6 +212,7 @@ exports.assignTechnician = async (req, res) => {
 exports.updateStatus = async (req, res) => {
 
     const connection = await pool.getConnection();
+    const company_id = req.user.company_id;
 
     try {
 
@@ -164,10 +220,11 @@ exports.updateStatus = async (req, res) => {
         const { status } = req.body;
 
         const allowedStatuses = [
-            "received",
-            "diagnosing",
-            "waiting_parts",
-            "ready",
+            "pending",
+            "diagnosis",
+            "approved",
+            "in_progress",
+            "completed",
             "delivered",
             "cancelled"
         ];
@@ -180,21 +237,36 @@ exports.updateStatus = async (req, res) => {
 
         await connection.beginTransaction();
 
-        const exists = await ServiceOrder.orderExists(connection, id);
+        const exists = await ServiceOrder.orderExists(
+            connection,
+            id,
+            company_id
+        );
 
         if (!exists) {
-            throw new Error("Orden no encontrada");
+            await connection.rollback();
+            connection.release();
+            return res.status(404).json({
+                message: "Orden no encontrada"
+            });
         }
 
-        await ServiceOrder.updateStatus(connection, id, status);
-
-        await ServiceOrder.insertStatusHistory(
+        await ServiceOrder.updateStatus(
             connection,
             id,
             status,
-            req.user.id
+            company_id
         );
 
+        await ServiceOrder.insertStatusHistory(
+            connection,
+            {
+                company_id,
+                service_order_id: id,
+                status,
+                changed_by: req.user.id
+            }
+        );
         await connection.commit();
         connection.release();
 
@@ -207,22 +279,28 @@ exports.updateStatus = async (req, res) => {
         await connection.rollback();
         connection.release();
 
+        console.error("Error updateStatus:", error);
+
         res.status(500).json({
-            message: error.message
+            message: "Error interno"
         });
     }
 };
 
 
 // ========================================
-// CLOSE SERVICE ORDER
+// CLOSE
 // ========================================
 exports.closeServiceOrder = async (req, res) => {
+
     try {
 
         const { id } = req.params;
 
-        const affectedRows = await ServiceOrder.closeServiceOrder(id);
+        const affectedRows = await ServiceOrder.closeServiceOrder(
+            id,
+            req.user.company_id
+        );
 
         if (!affectedRows) {
             return res.status(404).json({
@@ -235,7 +313,9 @@ exports.closeServiceOrder = async (req, res) => {
         });
 
     } catch (error) {
+
         console.error("Error closeServiceOrder:", error);
+
         res.status(500).json({
             message: "Error interno"
         });

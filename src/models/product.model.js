@@ -1,6 +1,5 @@
 const pool = require("../config/database");
 
-// Columnas permitidas para ordenar (evita SQL injection)
 const ALLOWED_SORT_FIELDS = [
     "created_at",
     "name",
@@ -13,12 +12,12 @@ const ALLOWED_ORDER = ["ASC", "DESC"];
 
 
 // ========================================
-// BUILD WHERE CLAUSE (REUTILIZABLE)
+// BUILD FILTERS
 // ========================================
-const buildFilters = ({ search, category, low_stock }) => {
+const buildFilters = ({ company_id, search, category, low_stock }) => {
 
-    let whereClause = "WHERE status = 'active'";
-    let values = [];
+    let whereClause = "WHERE company_id = ? AND status = 'active'";
+    let values = [company_id];
 
     if (search) {
         whereClause += " AND (name LIKE ? OR sku LIKE ?)";
@@ -42,6 +41,7 @@ const buildFilters = ({ search, category, low_stock }) => {
 // GET ALL PRODUCTS
 // ========================================
 const getAllProducts = async ({
+    company_id,
     page,
     limit,
     search,
@@ -54,12 +54,12 @@ const getAllProducts = async ({
     const offset = (page - 1) * limit;
 
     const { whereClause, values } = buildFilters({
+        company_id,
         search,
         category,
         low_stock
     });
 
-    // Sanitizar ordenamiento
     const safeSort = ALLOWED_SORT_FIELDS.includes(sort)
         ? sort
         : "created_at";
@@ -103,37 +103,26 @@ const getAllProducts = async ({
 // ========================================
 // GET PRODUCT BY ID
 // ========================================
-const getProductById = async (id) => {
+const getProductById = async (id, company_id) => {
 
     const [rows] = await pool.query(`
-        SELECT 
-            id,
-            name,
-            description,
-            sku,
-            category,
-            purchase_price,
-            sale_price,
-            stock,
-            min_stock,
-            status,
-            created_at
+        SELECT *
         FROM products
-        WHERE id = ?
-    `, [id]);
+        WHERE id = ? AND company_id = ?
+    `, [id, company_id]);
 
     return rows.length ? rows[0] : null;
 };
 
 
 // ========================================
-// CHECK SKU EXISTS
+// CHECK SKU EXISTS (POR EMPRESA)
 // ========================================
-const findBySku = async (connection, sku) => {
+const findBySku = async (connection, sku, company_id) => {
 
     const [rows] = await connection.query(
-        `SELECT id FROM products WHERE sku = ?`,
-        [sku]
+        `SELECT id FROM products WHERE sku = ? AND company_id = ?`,
+        [sku, company_id]
     );
 
     return rows.length > 0;
@@ -141,11 +130,12 @@ const findBySku = async (connection, sku) => {
 
 
 // ========================================
-// CREATE PRODUCT (TRANSACTION)
+// CREATE PRODUCT
 // ========================================
-const createProduct = async (connection, productData) => {
+const createProduct = async (connection, data) => {
 
     const {
+        company_id,
         name,
         description,
         sku,
@@ -155,10 +145,11 @@ const createProduct = async (connection, productData) => {
         stock,
         min_stock,
         created_by
-    } = productData;
+    } = data;
 
     const [result] = await connection.query(`
         INSERT INTO products (
+            company_id,
             name,
             description,
             sku,
@@ -170,8 +161,9 @@ const createProduct = async (connection, productData) => {
             created_by,
             status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
     `, [
+        company_id,
         name,
         description,
         sku,
@@ -188,10 +180,11 @@ const createProduct = async (connection, productData) => {
 
 
 // ========================================
-// CREATE INITIAL MOVEMENT
+// INITIAL MOVEMENT
 // ========================================
 const createInitialMovement = async (
     connection,
+    company_id,
     productId,
     stock,
     userId
@@ -199,6 +192,7 @@ const createInitialMovement = async (
 
     await connection.query(`
         INSERT INTO inventory_movements (
+            company_id,
             product_id,
             movement_type,
             quantity,
@@ -207,8 +201,9 @@ const createInitialMovement = async (
             user_id,
             notes
         )
-        VALUES (?, 'purchase', ?, 0, ?, ?, 'Stock inicial al crear producto')
+        VALUES (?, ?, 'purchase', ?, 0, ?, ?, 'Stock inicial')
     `, [
+        company_id,
         productId,
         stock,
         stock,
@@ -220,7 +215,7 @@ const createInitialMovement = async (
 // ========================================
 // UPDATE PRODUCT
 // ========================================
-const updateProduct = async (id, data) => {
+const updateProduct = async (id, company_id, data) => {
 
     const {
         name,
@@ -241,7 +236,7 @@ const updateProduct = async (id, data) => {
             purchase_price = ?,
             sale_price = ?,
             min_stock = ?
-        WHERE id = ?
+        WHERE id = ? AND company_id = ?
     `, [
         name,
         description,
@@ -250,7 +245,8 @@ const updateProduct = async (id, data) => {
         purchase_price,
         sale_price,
         min_stock,
-        id
+        id,
+        company_id
     ]);
 
     return result.affectedRows;
@@ -258,27 +254,29 @@ const updateProduct = async (id, data) => {
 
 
 // ========================================
-// SOFT DELETE PRODUCT
+// DELETE PRODUCT
 // ========================================
-const softDeleteProduct = async (id) => {
+const softDeleteProduct = async (id, company_id) => {
 
     const [result] = await pool.query(`
         UPDATE products
         SET status = 'inactive'
-        WHERE id = ?
-    `, [id]);
+        WHERE id = ? AND company_id = ?
+    `, [id, company_id]);
 
     return result.affectedRows;
 };
 
+
 // ========================================
-// FIND SKU BY OTHER PRODUCT
+// FIND SKU IN OTHER PRODUCT
 // ========================================
-const findSkuInOtherProduct = async (sku, productId) => {
+const findSkuInOtherProduct = async (sku, productId, company_id) => {
 
     const [rows] = await pool.query(
-        `SELECT id FROM products WHERE sku = ? AND id != ?`,
-        [sku, productId]
+        `SELECT id FROM products 
+         WHERE sku = ? AND id != ? AND company_id = ?`,
+        [sku, productId, company_id]
     );
 
     return rows.length > 0;

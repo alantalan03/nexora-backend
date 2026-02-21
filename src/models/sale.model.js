@@ -5,11 +5,13 @@ const pool = require("../config/database");
 // ========================================
 const createSaleHeader = async (
     connection,
-    { user_id, tax, discount, payment_method }
+    { company_id, user_id, customer_id, tax, discount, payment_method }
 ) => {
 
     const [result] = await connection.query(`
         INSERT INTO sales (
+            company_id,
+            customer_id,
             user_id,
             subtotal,
             tax,
@@ -17,8 +19,10 @@ const createSaleHeader = async (
             total_amount,
             payment_method
         )
-        VALUES (?, 0, ?, ?, 0, ?)
+        VALUES (?, ?, ?, 0, ?, ?, 0, ?)
     `, [
+        company_id,
+        customer_id,
         user_id,
         tax,
         discount,
@@ -28,16 +32,38 @@ const createSaleHeader = async (
     return result.insertId;
 };
 
+const getCustomerById = async (
+    connection,
+    customerId,
+    company_id
+) => {
+
+    const [rows] = await connection.query(
+        `SELECT id 
+         FROM customers 
+         WHERE id = ?
+         AND company_id = ?
+         AND status = 'active'
+         LIMIT 1`,
+        [customerId, company_id]
+    );
+
+    return rows.length ? rows[0] : null;
+};
+
 // ========================================
 // GET SALE HEADER BY ID
 // ========================================
-const getSaleHeaderById = async (saleId) => {
+const getSaleHeaderById = async (saleId, company_id) => {
 
     const [rows] = await pool.query(`
         SELECT 
             s.id,
+            s.company_id,
             s.user_id,
             u.name AS user_name,
+            s.customer_id,
+            c.name AS customer_name,
             s.subtotal,
             s.tax,
             s.discount,
@@ -47,17 +73,21 @@ const getSaleHeaderById = async (saleId) => {
             s.created_at
         FROM sales s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN customers c 
+            ON s.customer_id = c.id
+            AND c.company_id = s.company_id
         WHERE s.id = ?
-    `, [saleId]);
+        AND s.company_id = ?
+        LIMIT 1
+    `, [saleId, company_id]);
 
     return rows.length ? rows[0] : null;
 };
 
-
 // ========================================
 // GET SALE PRODUCTS BY SALE ID
 // ========================================
-const getSaleProductsBySaleId = async (saleId) => {
+const getSaleProductsBySaleId = async (saleId, company_id) => {
 
     const [rows] = await pool.query(`
         SELECT 
@@ -70,8 +100,10 @@ const getSaleProductsBySaleId = async (saleId) => {
             sp.profit
         FROM sale_products sp
         JOIN products p ON sp.product_id = p.id
+        JOIN sales s ON sp.sale_id = s.id
         WHERE sp.sale_id = ?
-    `, [saleId]);
+        AND s.company_id = ?
+    `, [saleId, company_id]);
 
     return rows;
 };
@@ -80,6 +112,7 @@ const getSaleProductsBySaleId = async (saleId) => {
 // GET ALL SALES
 // ========================================
 const getAllSales = async ({
+    company_id,
     page,
     limit,
     start_date,
@@ -90,8 +123,8 @@ const getAllSales = async ({
 
     const offset = (page - 1) * limit;
 
-    let whereClause = "WHERE 1=1";
-    let values = [];
+    let whereClause = "WHERE s.company_id = ?";
+    let values = [company_id];
 
     if (start_date) {
         whereClause += " AND DATE(s.created_at) >= ?";
@@ -123,9 +156,11 @@ const getAllSales = async ({
             s.payment_method,
             s.status,
             s.created_at,
-            u.name AS user_name
+            u.name AS user_name,
+            c.name AS customer_name,
         FROM sales s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN customers c ON s.customer_id = c.id
         ${whereClause}
         ORDER BY s.created_at DESC
         LIMIT ? OFFSET ?
@@ -147,14 +182,15 @@ const getAllSales = async ({
 // ========================================
 // GET SALE FOR UPDATE
 // ========================================
-const getSaleForUpdate = async (connection, saleId) => {
+const getSaleForUpdate = async (connection, saleId, company_id) => {
 
     const [rows] = await connection.query(`
         SELECT *
         FROM sales
         WHERE id = ?
+        AND company_id = ?
         FOR UPDATE
-    `, [saleId]);
+    `, [saleId, company_id]);
 
     return rows.length ? rows[0] : null;
 };
@@ -177,7 +213,7 @@ const markSaleAsCancelled = async (connection, saleId) => {
 // ========================================
 // DAILY SUMMARY
 // ========================================
-const getDailySummary = async () => {
+const getDailySummary = async (company_id) => {
 
     const [rows] = await pool.query(`
         SELECT 
@@ -191,7 +227,8 @@ const getDailySummary = async () => {
         FROM sales s
         WHERE DATE(created_at) = CURDATE()
         AND status = 'completed'
-    `);
+        AND company_id = ?
+    `, [company_id]);
 
     return rows[0];
 };
@@ -199,11 +236,18 @@ const getDailySummary = async () => {
 // ========================================
 // GET PRODUCT FOR UPDATE (LOCK STOCK)
 // ========================================
-const getProductForUpdate = async (connection, productId) => {
+const getProductForUpdate = async (
+    connection,
+    productId,
+    company_id
+) => {
 
     const [rows] = await connection.query(
-        `SELECT * FROM products WHERE id = ? FOR UPDATE`,
-        [productId]
+        `SELECT * FROM products 
+         WHERE id = ?
+         AND company_id = ?
+         FOR UPDATE`,
+        [productId, company_id]
     );
 
     return rows.length ? rows[0] : null;
@@ -326,6 +370,50 @@ const updateSaleTotals = async (
     ]);
 };
 
+const getSalesByCustomer = async (
+    company_id,
+    customer_id
+) => {
+
+    const [sales] = await pool.query(`
+        SELECT 
+            id,
+            subtotal,
+            tax,
+            discount,
+            total_amount,
+            payment_method,
+            status,
+            created_at
+        FROM sales
+        WHERE company_id = ?
+        AND customer_id = ?
+        AND status = 'completed'
+        ORDER BY created_at DESC
+    `, [company_id, customer_id]);
+
+    return sales;
+};
+
+const getCustomerSalesSummary = async (
+    company_id,
+    customer_id
+) => {
+
+    const [rows] = await pool.query(`
+        SELECT 
+            COUNT(*) AS totalPurchases,
+            SUM(total_amount) AS totalSpent,
+            MAX(created_at) AS lastPurchase
+        FROM sales
+        WHERE company_id = ?
+        AND customer_id = ?
+        AND status = 'completed'
+    `, [company_id, customer_id]);
+
+    return rows[0];
+};
+
 
 module.exports = {
     createSaleHeader,
@@ -339,5 +427,8 @@ module.exports = {
     getAllSales,
     getSaleForUpdate,
     markSaleAsCancelled,
-    getDailySummary
+    getDailySummary,
+    getCustomerById,
+    getSalesByCustomer,
+    getCustomerSalesSummary
 };

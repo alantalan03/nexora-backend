@@ -13,4 +13,34 @@ router.get(
     dashboardController.getDashboardData
 );
 
+// ============================
+// MONTHLY SALES
+// ============================
+router.get(
+    "/sales/monthly",
+    verifyToken,
+    authorize("admin", "super_admin"),
+    dashboardController.getMonthlySales
+);
+
+// ============================
+// TOP PRODUCTS
+// ============================
+router.get(
+    "/top-products",
+    verifyToken,
+    authorize("admin", "super_admin"),
+    dashboardController.getTopProducts
+);
+
+// ============================
+// PAYMENT METHODS
+// ============================
+router.get(
+    "/payment-methods",
+    verifyToken,
+    authorize("admin", "super_admin"),
+    dashboardController.getPaymentMethods
+);
+
 module.exports = router;

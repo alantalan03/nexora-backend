@@ -28,4 +28,19 @@ router.get(
     inventoryController.getProductMovements
 );
 
+// Historial global (admin)
+router.get(
+    "/movements",
+    verifyToken,
+    authorize("admin", "super_admin"),
+    inventoryController.getAllMovements
+);
+
+router.get(
+    "/low-stock",
+    verifyToken,
+    authorize("admin", "super_admin"),
+    inventoryController.getLowStockProducts
+);
+
 module.exports = router;

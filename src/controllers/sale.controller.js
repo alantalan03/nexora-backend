@@ -15,7 +15,8 @@ exports.createSale = async (req, res) => {
             products,
             payment_method,
             discount = 0,
-            tax = 0
+            tax = 0,
+            customer_id = null
         } = req.body;
 
         if (!products || !Array.isArray(products) || products.length === 0) {
@@ -23,6 +24,20 @@ exports.createSale = async (req, res) => {
                 message: "La venta debe incluir productos"
             });
         }
+
+        // Validar cliente si viene
+if (customer_id) {
+
+    const customer = await Sale.getCustomerById(
+        connection,
+        customer_id,
+        req.user.company_id
+    );
+
+    if (!customer) {
+        throw new Error("Cliente no válido");
+    }
+}
 
         if (!payment_method) {
             return res.status(400).json({
@@ -43,11 +58,13 @@ exports.createSale = async (req, res) => {
 
         // 1️⃣ Crear cabecera
         const saleId = await Sale.createSaleHeader(connection, {
-            user_id: req.user.id,
-            tax,
-            discount,
-            payment_method
-        });
+    company_id: req.user.company_id,
+    user_id: req.user.id,
+    customer_id,
+    tax,
+    discount,
+    payment_method
+});
 
         // 2️⃣ Procesar productos
         for (const item of products) {
@@ -56,10 +73,11 @@ exports.createSale = async (req, res) => {
                 throw new Error("Cantidad inválida en productos");
             }
 
-            const product = await Sale.getProductForUpdate(
-                connection,
-                item.product_id
-            );
+const product = await Sale.getProductForUpdate(
+    connection,
+    item.product_id,
+    req.user.company_id
+);
 
             if (!product) {
                 throw new Error("Producto no encontrado");
@@ -164,7 +182,7 @@ exports.getSaleById = async (req, res) => {
 
         const { id } = req.params;
 
-        const sale = await Sale.getSaleHeaderById(id);
+        const sale = await Sale.getSaleHeaderById(id, req.user.company_id);
 
         if (!sale) {
             return res.status(404).json({
@@ -172,7 +190,7 @@ exports.getSaleById = async (req, res) => {
             });
         }
 
-        const products = await Sale.getSaleProductsBySaleId(id);
+        const products = await Sale.getSaleProductsBySaleId(id,req.user.company_id);
 
         res.status(200).json({
             sale,
@@ -204,6 +222,7 @@ exports.getAllSales = async (req, res) => {
         } = req.query;
 
         const result = await Sale.getAllSales({
+            company_id: req.user.company_id,
             page: Number(page),
             limit: Number(limit),
             start_date,
@@ -238,7 +257,9 @@ exports.getAllSales = async (req, res) => {
 exports.getDailySummary = async (req, res) => {
     try {
 
-        const summary = await Sale.getDailySummary();
+        const summary = await Sale.getDailySummary(
+            req.user.company_id
+        );
 
         res.status(200).json(summary);
 
@@ -265,7 +286,11 @@ exports.cancelSale = async (req, res) => {
 
         await connection.beginTransaction();
 
-        const sale = await Sale.getSaleForUpdate(connection, id);
+        const sale = await Sale.getSaleForUpdate(
+            connection,
+            id,
+            req.user.company_id
+        );
 
         if (!sale) {
             throw new Error("Venta no encontrada");
